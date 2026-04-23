@@ -1,0 +1,26 @@
+# Sweep outputs (non-deterministic; snapshot manually via .bak when meaningful)
+benchmarks.csv
+benchmarks.csv.*.bak
+benchmarks.csv.bak
+charts/
+
+# Logs
+*.log
+
+# Build artifacts (shouldn't land here — run.sh builds in the worktree — but
+# probe.h in particular is explicitly deleted from $SWEEP_DIR per run.sh:57,
+# so guard against accidental commits during debugging)
+probe.h
+harness
+*.o
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Editor / OS
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
