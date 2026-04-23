@@ -2,7 +2,7 @@
 """Generate interactive benchmark charts from benchmarks.csv.
 
 Writes into --outdir:
- - interactive.html: uPlot gallery (thumbnail per (color_space, scale_ratio)).
+ - index.html: uPlot gallery (thumbnail per (color_space, scale_ratio)).
  - chart.html: single-chart detail view with zoom/pan, hover tooltips, and
    a toggle legend. Auto-fits the y-axis to visible data.
  - data.js: the backing dataset.
@@ -400,7 +400,7 @@ CHART_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<p class="back"><a href="interactive.html">&larr; back to gallery</a></p>
+<p class="back"><a href="./">&larr; back to gallery</a></p>
 <h1 id="title">liboil chart</h1>
 
 <div id="pinned-bar">
@@ -805,14 +805,14 @@ def write_interactive(outdir, grouped, ordered_commits, failures, meta):
     (outdir / "data.js").write_text(data_js)
 
     common = UPLOT_COMMON_JS
-    (outdir / "interactive.html").write_text(
+    (outdir / "index.html").write_text(
         INTERACTIVE_HTML.replace("__COMMON_JS__", common)
     )
     (outdir / "chart.html").write_text(
         CHART_HTML.replace("__COMMON_JS__", common)
     )
     print(f"wrote {outdir / 'data.js'}  ({len(data_js) // 1024} KB)")
-    print(f"wrote {outdir / 'interactive.html'}")
+    print(f"wrote {outdir / 'index.html'}")
     print(f"wrote {outdir / 'chart.html'}")
 
 

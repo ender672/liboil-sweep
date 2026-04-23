@@ -87,4 +87,4 @@ If you see discontinuities in the `scalar` or `sse2` lines on the plot in the v4
 
 - `benchmarks.csv` — header `date,git_revision,color_space,backend,scale_ratio,time_ms`. Appended during a sweep; `*.bak` files are historical backups from prior runs.
 - `errors.log` — per-rev stderr from failing builds/runs, plus one-line summaries (`<sha> <iso_date> <reason>`). `plot.py` uses the summary lines to annotate missing points.
-- `charts/` — `interactive.html` (uPlot gallery), `chart.html` (single-chart detail view), `data.js` (dataset). Regenerate via `plot.py`.
+- `charts/` — `index.html` (uPlot gallery), `chart.html` (single-chart detail view), `data.js` (dataset). Regenerate via `plot.py`.
