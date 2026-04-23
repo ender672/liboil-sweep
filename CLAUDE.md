@@ -8,45 +8,6 @@ A benchmark-sweep harness for [liboil's](https://github.com/ender672/liboil) ima
 
 This repo contains **only** the sweep infrastructure — it is not itself a buildable C library. The liboil source lives in a separate checkout and is never modified; per-rev checkouts happen in a throwaway `git worktree`.
 
-## Common commands
-
-```sh
-# Full sweep over master, fresh CSV:
-LIBOIL_REPO=/path/to/liboil ./sweep.sh
-
-# More iterations per rev (takes minimum time across runs):
-LIBOIL_REPO=... OILITERATIONS=100 ./sweep.sh
-
-# Re-run a subset and merge into existing CSV (rows for matched SHAs replaced):
-LIBOIL_REPO=... SWEEP_RANGE="A..B" ./sweep.sh
-
-# Override the default PNG input ($LIBOIL_REPO/USE_THIS_PNG_FOR_BENCHMARKS.png):
-LIBOIL_REPO=... SWEEP_PNG=/path/to/input.png ./sweep.sh
-
-# Regenerate HTML charts from benchmarks.csv into charts/:
-python3 plot.py benchmarks.csv -o charts
-
-# Regenerate charts and push to https://liboil-bench.netlify.app:
-LIBOIL_REPO=/path/to/liboil ./deploy.sh
-```
-
-`run.sh` is invoked by `sweep.sh` per commit and is not meant to be called directly, but for debugging a single rev:
-
-```sh
-# From inside a worktree checked out at $sha:
-SWEEP_DIR=/abs/path/to/this/repo PNG=/abs/path/to/benchmark.png \
-    /abs/path/to/this/repo/run.sh <era> <sha> <iso_date>
-```
-
-## Required environment
-
-`sweep.sh` reads:
-
-- `LIBOIL_REPO` (required) — path to the liboil checkout to sweep
-- `SWEEP_PNG` (optional) — benchmark input PNG; defaults to `$LIBOIL_REPO/USE_THIS_PNG_FOR_BENCHMARKS.png`. Must be RGBA (the loader bails at `harness_png.h:45` otherwise)
-
-`SWEEP_DIR` (this repo's location) is auto-detected from the script's own path, so `sweep.sh` works wherever the repo lives.
-
 ## Architecture: the era system
 
 liboil's public API has mutated substantially over its history. To benchmark a single rev you need a harness whose `#include`s and function signatures match that rev's headers. The sweep does this by **detecting an "era" per commit** and picking a matching harness.
