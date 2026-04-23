@@ -25,6 +25,9 @@ LIBOIL_REPO=... SWEEP_PNG=/path/to/input.png ./sweep.sh
 
 # Regenerate HTML charts from benchmarks.csv into charts/:
 python3 plot.py benchmarks.csv -o charts
+
+# Regenerate charts and push to https://liboil-bench.netlify.app:
+LIBOIL_REPO=/path/to/liboil ./deploy.sh
 ```
 
 `run.sh` is invoked by `sweep.sh` per commit and is not meant to be called directly, but for debugging a single rev:
@@ -87,4 +90,4 @@ If you see discontinuities in the `scalar` or `sse2` lines on the plot in the v4
 
 - `benchmarks.csv` — header `date,git_revision,color_space,backend,scale_ratio,time_ms`. Appended during a sweep; `*.bak` files are historical backups from prior runs.
 - `errors.log` — per-rev stderr from failing builds/runs, plus one-line summaries (`<sha> <iso_date> <reason>`). `plot.py` uses the summary lines to annotate missing points.
-- `charts/` — `index.html` (uPlot gallery), `chart.html` (single-chart detail view), `data.js` (dataset). Regenerate via `plot.py`.
+- `charts/` — `index.html` (uPlot gallery), `chart.html` (single-chart detail view), `data.js` (dataset). Regenerate via `plot.py`. Deployed at https://liboil-bench.netlify.app.
