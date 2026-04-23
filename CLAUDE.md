@@ -27,18 +27,18 @@ liboil's public API has mutated substantially over its history. To benchmark a s
 | v4     | `harness_v4.c`       | `oil_resample.h` with `oil_scale_init`                |
 | v1     | (none — skipped)     | `resample.h` with `padded_sl_init`                    |
 
-All harnesses share `harness_png.h` (included, not linked — there are enough per-era preprocessor variations in the surrounding scaling logic that specialization is simpler than parameterization). v3c/v4 key off `enum oil_colorspace` and translate cs → (cmp, opts, gray) before calling `load_png`; cs is then carried through run_one as a separate argument rather than in the shared `struct bench_image`.
+Each harness runs **one** `(cs, ratio[, backend])` cell per invocation and prints a single `<ms>` line. `run.sh` owns matrix iteration: it loops the era's cs list (hardcoded per era; v4 probes the rev's headers) × the shared `ratios` × (v4 only) `backend_list`, and assembles the `date,sha,cs,backend,ratio,ms` row itself. Harnesses share `harness_png.h` (included, not linked).
 
-When touching harnesses: each `harness_v*.c` is pinned to its era's API. Do not try to unify them. When adding a new era, extend `detect_era` and add a `case` in `run.sh`.
+When touching harnesses: each `harness_v*.c` is pinned to its era's API. Do not try to unify them. When adding a new era, extend `detect_era`, add a `case` in `run.sh` (with its `cs_list`), and add a matching harness.
 
 ## v4 era: SIMD handling
 
 `run.sh`'s v4 branch is doing the most work because v4 is where SIMD backends appear. It:
 
-1. Generates `probe.h` at build time by grepping the rev's `oil_resample.h` for `OIL_CS_*` enums and `oil_scale_in_<simd>` prototypes, plus checking the corresponding `oil_resample_<simd>.c` file exists. This drives `#ifdef HAS_*` gates in `harness_v4.c` so the harness only calls backends the rev actually ships. (Stale `probe.h` in `$SWEEP_DIR` is deleted up front — it would shadow the fresh one via quoted-include resolution.)
+1. Generates `probe.h` (and the matching shell-side `cs_list` / `backend_list`) by grepping the rev's `oil_resample.h` for `OIL_CS_*` enums and `oil_scale_in_<simd>` prototypes, plus checking the `oil_resample_<simd>.c` sibling exists. `HAS_*` macros gate compile-time symbol references in `harness_v4.c`; the shell lists drive the runtime loop. (Stale `probe.h` in `$SWEEP_DIR` is deleted up front — it would shadow the fresh one via quoted-include resolution.)
 2. Compiles `oil_resample.c` plus any SIMD siblings matching the host arch, then links `harness_v4.c`.
 3. Detects the **embedded-SSE range** — a historical window where `oil_resample.c` uses SSE2 internally on x86_64 but the public header does not yet export `oil_scale_in_sse2`. Two sub-modes:
-   - `embedded_sse=1` (PRIMARY): SSE is gated by `__x86_64__` or `OIL_USE_SSE2`. The normal pass relabels `scalar` → `sse2` in the CSV, then a **second** `-DOIL_NO_SIMD` pass is done to recover genuine scalar timings. For pre-`oil_resample_internal.h` revs, the nosimd pass `sed`-patches `__x86_64__` gates in-source.
+   - `embedded_sse=1` (PRIMARY): SSE is gated by `__x86_64__` or `OIL_USE_SSE2`. The normal pass emits rows labeled `sse2` instead of `scalar`, then a **second** `-DOIL_NO_SIMD` pass recovers genuine scalar timings. For pre-`oil_resample_internal.h` revs, the nosimd pass `sed`-patches `__x86_64__` gates in-source.
    - `embedded_sse=2` (GREY): SSE intrinsics are inlined with no preprocessor gate — `-DOIL_NO_SIMD` produces identical timings, so relabel only, no second pass.
 
 If you see discontinuities in the `scalar` or `sse2` lines on the plot in the v4 range, the embedded-SSE classification is the first thing to look at.

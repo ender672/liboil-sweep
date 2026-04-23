@@ -14,28 +14,63 @@
  *   xscale(in, in_w, out, out_w, cmp, opts)
  *
  * No fix_ratio — compute output dims directly from the ratio, clamped to >=1.
+ *
+ * Runs one (cs, ratio) cell per invocation and prints just the best-of-N
+ * time in ms. The caller (run.sh) iterates the matrix and assembles the
+ * CSV row.
+ *
+ * Usage: harness <png> <cs> <ratio>
  */
 #include "harness_png.h"
 #include "resample.h"
 #include "yscaler.h"
 
-static void run_one(struct bench_image image, int opts, double ratio,
-	const char *cs_name)
+static int parse_cs(const char *name, int *cmp, int *opts, int *gray)
 {
+	*opts = 0;
+	*gray = 0;
+	if (!strcmp(name, "G"))    { *cmp = 1; *gray = 1;            return 1; }
+	if (!strcmp(name, "GA"))   { *cmp = 2; *gray = 1;            return 1; }
+	if (!strcmp(name, "RGB"))  { *cmp = 3;                       return 1; }
+	if (!strcmp(name, "RGBX")) { *cmp = 4; *opts = 1;            return 1; }
+	if (!strcmp(name, "RGBA")) { *cmp = 4;                       return 1; }
+	return 0;
+}
+
+int main(int argc, char *argv[])
+{
+	const char *env;
+	int cmp, opts, gray;
+	double ratio;
+	struct bench_image image;
 	uint32_t out_w, out_h;
+	size_t in_row_stride, outbuf_size;
+	unsigned char *outbuf;
 	clock_t t_min = 0;
 	int k;
-	unsigned char *outbuf;
-	size_t outbuf_size;
-	size_t in_row_stride = (size_t)image.width * image.cmp;
 
+	if (argc != 4) {
+		fprintf(stderr, "usage: %s <png> <cs> <ratio>\n", argv[0]);
+		return 1;
+	}
+	if (!parse_cs(argv[2], &cmp, &opts, &gray)) {
+		fprintf(stderr, "unsupported cs: %s\n", argv[2]);
+		return 2;
+	}
+	ratio = atof(argv[3]);
+
+	env = getenv("OILITERATIONS");
+	g_iters = env ? atoi(env) : 1;
+	if (g_iters < 1) g_iters = 1;
+
+	image = load_png(argv[1], cmp, opts, gray);
+	in_row_stride = (size_t)image.width * image.cmp;
 	{
 		double _w = round(image.width * ratio);
 		double _h = round(image.height * ratio);
 		out_w = (uint32_t)(_w < 1 ? 1 : _w);
 		out_h = (uint32_t)(_h < 1 ? 1 : _h);
 	}
-
 	outbuf_size = (size_t)out_w * image.cmp;
 	outbuf = malloc(outbuf_size);
 	if (!outbuf) { fprintf(stderr, "outbuf alloc\n"); exit(1); }
@@ -68,36 +103,10 @@ static void run_one(struct bench_image image, int opts, double ratio,
 
 	{
 		double ms = (double)t_min * 1000.0 / CLOCKS_PER_SEC;
-		printf("%s,%s,%g,%.3f\n", cs_name, "scalar", ratio, ms);
+		printf("%.3f\n", ms);
 		fflush(stdout);
 	}
 	free(outbuf);
-}
-
-static void bench_cs(const char *path, int cmp, int opts, int gray,
-	const char *cs_name)
-{
-	struct bench_image image = load_png(path, cmp, opts, gray);
-	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
-	size_t ri;
-	for (ri = 0; ri < sizeof(ratios)/sizeof(ratios[0]); ri++) {
-		run_one(image, opts, ratios[ri], cs_name);
-	}
 	free(image.buffer);
-}
-
-int main(int argc, char *argv[])
-{
-	const char *env;
-	if (argc != 2) { fprintf(stderr, "usage: %s <png>\n", argv[0]); return 1; }
-	env = getenv("OILITERATIONS");
-	g_iters = env ? atoi(env) : 1;
-	if (g_iters < 1) g_iters = 1;
-
-	bench_cs(argv[1], 1, 0, 1, "G");
-	bench_cs(argv[1], 2, 0, 1, "GA");
-	bench_cs(argv[1], 3, 0, 0, "RGB");
-	bench_cs(argv[1], 4, 1, 0, "RGBX"); /* OIL_FILLER=1 */
-	bench_cs(argv[1], 4, 0, 0, "RGBA");
 	return 0;
 }

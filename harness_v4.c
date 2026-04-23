@@ -1,11 +1,14 @@
 /*
  * Benchmark harness for the v4 liboil API (oil_resample.h / oil_scale_init /
- * enum oil_colorspace). SIMD backends are advertised by probe.h via HAS_SSE2
- * / HAS_AVX2 / HAS_NEON; colorspaces via HAS_CS_*.
+ * enum oil_colorspace).
  *
- * Uses the shared harness_png.h loader; cs is passed alongside the image
- * rather than being carried in the struct. cs→(cmp,opts,gray) mapping below
- * only references enum values whose HAS_CS_* macro is defined.
+ * Runs exactly one (cs, ratio, backend) cell per invocation and prints the
+ * best-of-N time in ms. The caller (run.sh) iterates the matrix and assembles
+ * the full CSV row. probe.h still gates which colorspaces and backends are
+ * compiled in, based on what the rev's headers declare.
+ *
+ * Usage: harness <png> <cs_name> <ratio> <backend>
+ * Output: a single line, just the ms as %.3f.
  */
 #include "harness_png.h"
 #include "oil_resample.h"
@@ -37,95 +40,106 @@ static void cs_to_png_params(enum oil_colorspace cs, int *cmp, int *opts,
 	}
 }
 
-#define RUN(IN_FN, OUT_FN, BACKEND_LABEL) do {                             \
-	clock_t t_min = 0;                                                 \
-	int _k;                                                            \
-	for (_k = 0; _k < g_iters; _k++) {                                 \
-		struct oil_scale os;                                       \
-		unsigned char *p = image.buffer;                           \
-		clock_t _t0 = clock();                                     \
-		oil_scale_init(&os, image.height, out_h,                   \
-			image.width, out_w, cs);                           \
-		{                                                          \
-			int _i;                                            \
-			for (_i = 0; _i < out_h; _i++) {                   \
-				int _s;                                    \
-				for (_s = oil_scale_slots(&os); _s > 0;    \
-					_s--) {                            \
-					IN_FN(&os, p);                     \
-					p += in_row_stride;                \
-				}                                          \
-				OUT_FN(&os, outbuf);                       \
-			}                                                  \
-		}                                                          \
-		{                                                          \
-			clock_t _t = clock() - _t0;                        \
-			oil_scale_free(&os);                               \
-			if (!t_min || _t < t_min) t_min = _t;              \
-		}                                                          \
-	}                                                                  \
-	{                                                                  \
-		double ms = (double)t_min * 1000.0 / CLOCKS_PER_SEC;       \
-		printf("%s,%s,%g,%.3f\n",                                  \
-			cs_name, BACKEND_LABEL, ratio, ms);                \
-		fflush(stdout);                                            \
-	}                                                                  \
-} while (0)
+#ifdef HAS_SCALE_RETURNS_INT
+typedef int (*scale_fn)(struct oil_scale *, unsigned char *);
+#else
+typedef void (*scale_fn)(struct oil_scale *, unsigned char *);
+#endif
 
-static void bench_cs(const char *path, enum oil_colorspace cs,
-	const char *cs_name)
+static int parse_cs(const char *name, enum oil_colorspace *out)
 {
-	int cmp, opts, gray;
-	cs_to_png_params(cs, &cmp, &opts, &gray);
-	struct bench_image image = load_png(path, cmp, opts, gray);
-	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
-	size_t ri;
-	size_t in_row_stride = (size_t)image.width * (size_t)OIL_CMP(cs);
-	unsigned char *outbuf = NULL;
-	size_t outbuf_size = 0;
+#ifdef HAS_CS_G
+	if (!strcmp(name, "G"))           { *out = OIL_CS_G;           return 1; }
+#endif
+#ifdef HAS_CS_GA
+	if (!strcmp(name, "GA"))          { *out = OIL_CS_GA;          return 1; }
+#endif
+#ifdef HAS_CS_RGB
+	if (!strcmp(name, "RGB"))         { *out = OIL_CS_RGB;         return 1; }
+#endif
+#ifdef HAS_CS_RGBX
+	if (!strcmp(name, "RGBX"))        { *out = OIL_CS_RGBX;        return 1; }
+#endif
+#ifdef HAS_CS_RGBA
+	if (!strcmp(name, "RGBA"))        { *out = OIL_CS_RGBA;        return 1; }
+#endif
+#ifdef HAS_CS_ARGB
+	if (!strcmp(name, "ARGB"))        { *out = OIL_CS_ARGB;        return 1; }
+#endif
+#ifdef HAS_CS_CMYK
+	if (!strcmp(name, "CMYK"))        { *out = OIL_CS_CMYK;        return 1; }
+#endif
+#ifdef HAS_CS_RGB_NOGAMMA
+	if (!strcmp(name, "RGB_NOGAMMA"))  { *out = OIL_CS_RGB_NOGAMMA;  return 1; }
+#endif
+#ifdef HAS_CS_RGBA_NOGAMMA
+	if (!strcmp(name, "RGBA_NOGAMMA")) { *out = OIL_CS_RGBA_NOGAMMA; return 1; }
+#endif
+#ifdef HAS_CS_RGBX_NOGAMMA
+	if (!strcmp(name, "RGBX_NOGAMMA")) { *out = OIL_CS_RGBX_NOGAMMA; return 1; }
+#endif
+	return 0;
+}
 
-	for (ri = 0; ri < sizeof(ratios) / sizeof(ratios[0]); ri++) {
-		double ratio = ratios[ri];
-		int out_w = (int)round(image.width * ratio);
-		int out_h = 500000;
-		size_t need;
-
-		oil_fix_ratio(image.width, image.height, &out_w, &out_h);
-
-		need = (size_t)out_w * (size_t)OIL_CMP(cs);
-		if (need > outbuf_size) {
-			free(outbuf);
-			outbuf = malloc(need);
-			if (!outbuf) {
-				fprintf(stderr, "outbuf alloc failed\n");
-				exit(1);
-			}
-			outbuf_size = need;
-		}
-
-		RUN(oil_scale_in, oil_scale_out, "scalar");
+static int parse_backend(const char *name, scale_fn *in_fn, scale_fn *out_fn)
+{
+	if (!strcmp(name, "scalar")) {
+		*in_fn = oil_scale_in;
+		*out_fn = oil_scale_out;
+		return 1;
+	}
 #ifdef HAS_SSE2
-		RUN(oil_scale_in_sse2, oil_scale_out_sse2, "sse2");
+	if (!strcmp(name, "sse2")) {
+		*in_fn = oil_scale_in_sse2;
+		*out_fn = oil_scale_out_sse2;
+		return 1;
+	}
 #endif
 #ifdef HAS_AVX2
-		RUN(oil_scale_in_avx2, oil_scale_out_avx2, "avx2");
+	if (!strcmp(name, "avx2")) {
+		*in_fn = oil_scale_in_avx2;
+		*out_fn = oil_scale_out_avx2;
+		return 1;
+	}
 #endif
 #ifdef HAS_NEON
-		RUN(oil_scale_in_neon, oil_scale_out_neon, "neon");
-#endif
+	if (!strcmp(name, "neon")) {
+		*in_fn = oil_scale_in_neon;
+		*out_fn = oil_scale_out_neon;
+		return 1;
 	}
-
-	free(outbuf);
-	free(image.buffer);
+#endif
+	return 0;
 }
 
 int main(int argc, char *argv[])
 {
 	const char *iterenv;
+	enum oil_colorspace cs;
+	scale_fn in_fn, out_fn;
+	int cmp, opts, gray;
+	struct bench_image image;
+	double ratio;
+	int out_w, out_h;
+	size_t in_row_stride, need;
+	unsigned char *outbuf;
+	clock_t t_min = 0;
+	int k;
 
-	if (argc != 2) {
-		fprintf(stderr, "usage: %s <png>\n", argv[0]);
+	if (argc != 5) {
+		fprintf(stderr,
+			"usage: %s <png> <cs> <ratio> <backend>\n", argv[0]);
 		return 1;
+	}
+
+	if (!parse_cs(argv[2], &cs)) {
+		fprintf(stderr, "unsupported cs: %s\n", argv[2]);
+		return 2;
+	}
+	ratio = atof(argv[3]);
+	if (!parse_backend(argv[4], &in_fn, &out_fn)) {
+		fprintf(stderr, "unsupported backend: %s\n", argv[4]);
+		return 2;
 	}
 
 	iterenv = getenv("OILITERATIONS");
@@ -134,36 +148,45 @@ int main(int argc, char *argv[])
 
 	oil_global_init();
 
-#ifdef HAS_CS_G
-	bench_cs(argv[1], OIL_CS_G, "G");
-#endif
-#ifdef HAS_CS_GA
-	bench_cs(argv[1], OIL_CS_GA, "GA");
-#endif
-#ifdef HAS_CS_RGB
-	bench_cs(argv[1], OIL_CS_RGB, "RGB");
-#endif
-#ifdef HAS_CS_RGBX
-	bench_cs(argv[1], OIL_CS_RGBX, "RGBX");
-#endif
-#ifdef HAS_CS_RGBA
-	bench_cs(argv[1], OIL_CS_RGBA, "RGBA");
-#endif
-#ifdef HAS_CS_ARGB
-	bench_cs(argv[1], OIL_CS_ARGB, "ARGB");
-#endif
-#ifdef HAS_CS_CMYK
-	bench_cs(argv[1], OIL_CS_CMYK, "CMYK");
-#endif
-#ifdef HAS_CS_RGB_NOGAMMA
-	bench_cs(argv[1], OIL_CS_RGB_NOGAMMA, "RGB_NOGAMMA");
-#endif
-#ifdef HAS_CS_RGBA_NOGAMMA
-	bench_cs(argv[1], OIL_CS_RGBA_NOGAMMA, "RGBA_NOGAMMA");
-#endif
-#ifdef HAS_CS_RGBX_NOGAMMA
-	bench_cs(argv[1], OIL_CS_RGBX_NOGAMMA, "RGBX_NOGAMMA");
-#endif
+	cs_to_png_params(cs, &cmp, &opts, &gray);
+	image = load_png(argv[1], cmp, opts, gray);
 
+	in_row_stride = (size_t)image.width * (size_t)OIL_CMP(cs);
+	out_w = (int)round(image.width * ratio);
+	out_h = 500000;
+	oil_fix_ratio(image.width, image.height, &out_w, &out_h);
+	need = (size_t)out_w * (size_t)OIL_CMP(cs);
+	outbuf = malloc(need);
+	if (!outbuf) { fprintf(stderr, "outbuf alloc failed\n"); exit(1); }
+
+	for (k = 0; k < g_iters; k++) {
+		struct oil_scale os;
+		unsigned char *p = image.buffer;
+		clock_t t0 = clock();
+		clock_t t;
+		int i;
+		oil_scale_init(&os, image.height, out_h,
+			image.width, out_w, cs);
+		for (i = 0; i < out_h; i++) {
+			int s;
+			for (s = oil_scale_slots(&os); s > 0; s--) {
+				in_fn(&os, p);
+				p += in_row_stride;
+			}
+			out_fn(&os, outbuf);
+		}
+		t = clock() - t0;
+		oil_scale_free(&os);
+		if (!t_min || t < t_min) t_min = t;
+	}
+
+	{
+		double ms = (double)t_min * 1000.0 / CLOCKS_PER_SEC;
+		printf("%.3f\n", ms);
+		fflush(stdout);
+	}
+
+	free(outbuf);
+	free(image.buffer);
 	return 0;
 }

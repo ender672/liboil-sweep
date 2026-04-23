@@ -56,16 +56,34 @@ rm -f oil_resample.o sse2.o avx2.o neon.o resample.o yscaler.o harness probe.h
 # would silently shadow the freshly-generated one in CWD. Delete it.
 rm -f "$SWEEP_DIR/probe.h"
 
+# Benchmark matrix: ratios are the same across every era. cs_list is set
+# per-era below (v4 probes the rev's headers; earlier eras hardcode the
+# list their harness accepts).
+ratios="0.01 0.125 0.8 2.14"
+
 case "$era" in
 v4)
-	# Generate probe.h listing HAS_CS_* / HAS_SSE2 / HAS_AVX2 / HAS_NEON
+	# Generate probe.h listing HAS_CS_* / HAS_SSE2 / HAS_AVX2 / HAS_NEON,
+	# and populate shell-side cs_list / backend_list mirrors that the
+	# run loop below iterates.
+	cs_list=""
+	backend_list="scalar"
 	{
 		for cs in G GA RGB RGBX RGBA ARGB CMYK \
 			RGB_NOGAMMA RGBA_NOGAMMA RGBX_NOGAMMA; do
 			if grep -q "OIL_CS_${cs}[[:space:]]*=" oil_resample.h; then
 				echo "#define HAS_CS_${cs} 1"
+				cs_list="$cs_list $cs"
 			fi
 		done
+		# Later v4 revs changed oil_scale_in / oil_scale_out to return
+		# `int` (error status). Earlier v4 revs return `void`. The
+		# harness discards the value either way, but needs the right
+		# signature for its function-pointer typedef.
+		if grep -qE '^[[:space:]]*int[[:space:]]+oil_scale_in[[:space:]]*\(' \
+			oil_resample.h; then
+			echo "#define HAS_SCALE_RETURNS_INT 1"
+		fi
 		# Only advertise SIMD backends that also match the host arch,
 		# and skip them entirely when SWEEP_NO_SIMD=1.
 		if [ "${SWEEP_NO_SIMD:-0}" != 1 ]; then
@@ -85,6 +103,7 @@ v4)
 				if grep -q "oil_scale_in_${simd}" oil_resample.h \
 				   && [ -f "oil_resample_${simd}.c" ]; then
 					echo "#define HAS_${up} 1"
+					backend_list="$backend_list $simd"
 				fi
 			done
 		fi
@@ -167,6 +186,59 @@ v4)
 			embedded_sse=2
 		fi
 	fi
+
+	# Run the matrix. The harness executes one (cs, ratio, backend) cell
+	# per invocation and prints just <ms>; we assemble the CSV row here.
+	# Loop order (cs outer, ratio middle, backend inner) matches the old
+	# in-harness ordering so CSV row order is stable.
+	#
+	# Embedded-SSE relabel: on embedded_sse=1 (PRIMARY, SIMD not disabled)
+	# or =2 (GREY), what the harness reports as `scalar` is actually SSE2
+	# — emit as `sse2`. embedded_sse=1 + SWEEP_NO_SIMD=1 keeps `scalar` as
+	# is because the gates were flipped at compile time.
+	relabel_emb=0
+	case "$embedded_sse" in
+	1) [ "${SWEEP_NO_SIMD:-0}" != 1 ] && relabel_emb=1 ;;
+	2) relabel_emb=1 ;;
+	esac
+	for cs in $cs_list; do
+		for ratio in $ratios; do
+			for backend in $backend_list; do
+				ms=$(./harness "$PNG" "$cs" "$ratio" "$backend")
+				emit=$backend
+				[ "$relabel_emb" = 1 ] && [ "$backend" = scalar ] \
+					&& emit=sse2
+				echo "$date,$sha,$cs,$emit,$ratio,$ms"
+			done
+		done
+	done
+
+	# Embedded-SSE PRIMARY range: first pass reported `sse2` rows (via
+	# relabel). Rebuild with -DOIL_NO_SIMD and re-run scalar only to
+	# recover genuine scalar timings so the scalar line stays continuous.
+	# Skip if we're already in a NOSIMD-only sweep.
+	if [ "$embedded_sse" = 1 ] && [ "${SWEEP_NO_SIMD:-0}" != 1 ]; then
+		rm -f oil_resample.o harness
+		nosimd_src=oil_resample.c
+		if ! [ -f oil_resample_internal.h ] \
+		   && grep -q 'defined(__x86_64__)' oil_resample.c; then
+			# Pre-internal.h revs: flip raw __x86_64__ gates in-source.
+			sed -e 's/#if defined(__x86_64__)/#if 0/g' \
+				-e 's/#if !defined(__x86_64__)/#if 1/g' \
+				-e 's/scale_down_rgb_sse(/scale_down_rgb(/g' \
+				oil_resample.c > oil_resample_nosimd.c
+			nosimd_src=oil_resample_nosimd.c
+		fi
+		$CC $CFLAGS -DOIL_NO_SIMD -I. -c "$nosimd_src" -o oil_resample.o
+		$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v4.c" oil_resample.o \
+			-o harness -lpng -lm
+		for cs in $cs_list; do
+			for ratio in $ratios; do
+				ms=$(./harness "$PNG" "$cs" "$ratio" scalar)
+				echo "$date,$sha,$cs,scalar,$ratio,$ms"
+			done
+		done
+	fi
 	;;
 
 v3c)
@@ -174,6 +246,7 @@ v3c)
 	$CC $CFLAGS -c resample.c -o resample.o
 	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v3c.c" resample.o \
 		-o harness -lpng -lm
+	cs_list="G GA RGB RGBX RGBA CMYK"
 	;;
 
 v3b)
@@ -181,19 +254,21 @@ v3b)
 	$CC $CFLAGS -c resample.c -o resample.o
 	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v3b.c" resample.o \
 		-o harness -lpng -lm
+	cs_list="G GA RGB RGBX RGBA"
 	;;
 
 v2a|v2b|v2c|v2d|v2e|v3a)
 	# v2/v3a era: separate or merged yscaler, xscale() free fn.
 	# Each sub-era has its own harness matching that era's function
 	# signatures. harness_png.h is included from each and must be on -I.
+	# v3a has no OIL_FILLER, so RGBX isn't meaningful and is skipped.
 	case "$era" in
-	v2a) harness=$SWEEP_DIR/harness_v2a.c ;;
-	v2b) harness=$SWEEP_DIR/harness_v2b.c ;;
-	v2c) harness=$SWEEP_DIR/harness_v2.c  ;;
-	v2d) harness=$SWEEP_DIR/harness_v2d.c ;;
-	v2e) harness=$SWEEP_DIR/harness_v2e.c ;;
-	v3a) harness=$SWEEP_DIR/harness_v3a.c ;;
+	v2a) harness=$SWEEP_DIR/harness_v2a.c ; cs_list="G GA RGB RGBX RGBA" ;;
+	v2b) harness=$SWEEP_DIR/harness_v2b.c ; cs_list="G GA RGB RGBX RGBA" ;;
+	v2c) harness=$SWEEP_DIR/harness_v2.c  ; cs_list="G GA RGB RGBX RGBA" ;;
+	v2d) harness=$SWEEP_DIR/harness_v2d.c ; cs_list="G GA RGB RGBX RGBA" ;;
+	v2e) harness=$SWEEP_DIR/harness_v2e.c ; cs_list="G GA RGB RGBX RGBA" ;;
+	v3a) harness=$SWEEP_DIR/harness_v3a.c ; cs_list="G GA RGB RGBA" ;;
 	esac
 	$CC $CFLAGS -c resample.c -o resample.o
 	objs="resample.o"
@@ -216,44 +291,14 @@ v1)
 	;;
 esac
 
-# Run harness; prepend date + sha to each CSV row. If the v4 build
-# detected embedded-SSE (no split sse2 backend but intrinsics in the
-# main source), relabel "scalar" -> "sse2" so the plot line is continuous.
-# Exception: a PRIMARY rev (embedded_sse=1) built with SWEEP_NO_SIMD=1
-# really did produce scalar output (gates were flipped), so leave it alone.
-# GREY revs (embedded_sse=2) can't have SSE turned off, so always relabel.
-relabel_emb=0
-case "${embedded_sse:-0}" in
-1) [ "${SWEEP_NO_SIMD:-0}" != 1 ] && relabel_emb=1 ;;
-2) relabel_emb=1 ;;
-esac
-./harness "$PNG" | \
-	awk -v d="$date" -v r="$sha" -v emb="$relabel_emb" '
-		BEGIN { OFS = "," }
-		NF {
-			if (emb == 1) sub(/,scalar,/, ",sse2,")
-			print d, r, $0
-		}'
-
-# Embedded-SSE range: first pass produced `sse2` rows (via relabel). Do a
-# second pass with -DOIL_NO_SIMD to recover genuine scalar timings so the
-# scalar line stays continuous across the range. Skip if we're already
-# in a NOSIMD-only sweep.
-if [ "${embedded_sse:-0}" = 1 ] && [ "${SWEEP_NO_SIMD:-0}" != 1 ]; then
-	rm -f oil_resample.o harness
-	nosimd_src=oil_resample.c
-	if ! [ -f oil_resample_internal.h ] \
-	   && grep -q 'defined(__x86_64__)' oil_resample.c; then
-		# Pre-internal.h revs: flip raw __x86_64__ gates in-source.
-		sed -e 's/#if defined(__x86_64__)/#if 0/g' \
-			-e 's/#if !defined(__x86_64__)/#if 1/g' \
-			-e 's/scale_down_rgb_sse(/scale_down_rgb(/g' \
-			oil_resample.c > oil_resample_nosimd.c
-		nosimd_src=oil_resample_nosimd.c
-	fi
-	$CC $CFLAGS -DOIL_NO_SIMD -I. -c "$nosimd_src" -o oil_resample.o
-	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v4.c" oil_resample.o \
-		-o harness -lpng -lm
-	./harness "$PNG" | \
-		awk -v d="$date" -v r="$sha" 'BEGIN{OFS=","} NF {print d,r,$0}'
+# Non-v4 eras: scalar only, no SIMD probe, no second pass. Loop cs × ratio
+# and assemble the CSV row here. (v4 has its own looping block above with
+# relabel + -DOIL_NO_SIMD second pass.)
+if [ "$era" != v4 ]; then
+	for cs in $cs_list; do
+		for ratio in $ratios; do
+			ms=$(./harness "$PNG" "$cs" "$ratio")
+			echo "$date,$sha,$cs,scalar,$ratio,$ms"
+		done
+	done
 fi

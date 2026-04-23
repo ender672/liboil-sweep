@@ -5,36 +5,58 @@
  *   enum oil_colorspace + preprocess_xscaler + yscaler_scale(ys, out, pos)
  *   + fix_ratio + CS_TO_CMP
  *
- * Uses the shared harness_png.h loader; cs is passed alongside the image
- * rather than being carried in the struct.
+ * Runs one (cs, ratio) cell per invocation and prints just the best-of-N
+ * time in ms. The caller (run.sh) iterates the matrix and assembles the
+ * CSV row.
+ *
+ * Usage: harness <png> <cs> <ratio>
  */
 #include "harness_png.h"
 #include "resample.h"
 
-static void cs_to_png_params(enum oil_colorspace cs, int *cmp, int *opts,
-	int *gray)
+static int parse_cs(const char *name, enum oil_colorspace *out, int *cmp,
+	int *opts, int *gray)
 {
-	*cmp = CS_TO_CMP(cs);
 	*opts = 0;
 	*gray = 0;
-	switch (cs) {
-	case OIL_CS_G:    *gray = 1; break;
-	case OIL_CS_GA:   *gray = 1; break;
-	case OIL_CS_RGBX: *opts = 1; break;
-	default: break; /* RGB / RGBA / CMYK: nothing extra */
-	}
+	if (!strcmp(name, "G"))    { *out = OIL_CS_G;    *cmp = CS_TO_CMP(*out); *gray = 1; return 1; }
+	if (!strcmp(name, "GA"))   { *out = OIL_CS_GA;   *cmp = CS_TO_CMP(*out); *gray = 1; return 1; }
+	if (!strcmp(name, "RGB"))  { *out = OIL_CS_RGB;  *cmp = CS_TO_CMP(*out);            return 1; }
+	if (!strcmp(name, "RGBX")) { *out = OIL_CS_RGBX; *cmp = CS_TO_CMP(*out); *opts = 1; return 1; }
+	if (!strcmp(name, "RGBA")) { *out = OIL_CS_RGBA; *cmp = CS_TO_CMP(*out);            return 1; }
+	if (!strcmp(name, "CMYK")) { *out = OIL_CS_CMYK; *cmp = CS_TO_CMP(*out);            return 1; }
+	return 0;
 }
 
-static void run_one(struct bench_image image, enum oil_colorspace cs,
-	double ratio, const char *cs_name)
+int main(int argc, char *argv[])
 {
+	const char *env;
+	enum oil_colorspace cs;
+	int cmp, opts, gray;
+	double ratio;
+	struct bench_image image;
 	uint32_t out_w, out_h;
+	size_t in_row_stride, outbuf_size;
+	unsigned char *outbuf;
 	clock_t t_min = 0;
 	int k;
-	unsigned char *outbuf;
-	size_t outbuf_size;
-	size_t in_row_stride = (size_t)image.width * (size_t)CS_TO_CMP(cs);
 
+	if (argc != 4) {
+		fprintf(stderr, "usage: %s <png> <cs> <ratio>\n", argv[0]);
+		return 1;
+	}
+	if (!parse_cs(argv[2], &cs, &cmp, &opts, &gray)) {
+		fprintf(stderr, "unsupported cs: %s\n", argv[2]);
+		return 2;
+	}
+	ratio = atof(argv[3]);
+
+	env = getenv("OILITERATIONS");
+	g_iters = env ? atoi(env) : 1;
+	if (g_iters < 1) g_iters = 1;
+
+	image = load_png(argv[1], cmp, opts, gray);
+	in_row_stride = (size_t)image.width * (size_t)CS_TO_CMP(cs);
 	out_w = (uint32_t)round(image.width * ratio);
 	out_h = 500000;
 	fix_ratio((uint32_t)image.width, (uint32_t)image.height, &out_w, &out_h);
@@ -74,41 +96,10 @@ static void run_one(struct bench_image image, enum oil_colorspace cs,
 
 	{
 		double ms = (double)t_min * 1000.0 / CLOCKS_PER_SEC;
-		printf("%s,%s,%g,%.3f\n", cs_name, "scalar", ratio, ms);
+		printf("%.3f\n", ms);
 		fflush(stdout);
 	}
-
 	free(outbuf);
-}
-
-static void bench_cs(const char *path, enum oil_colorspace cs,
-	const char *cs_name)
-{
-	int cmp, opts, gray;
-	cs_to_png_params(cs, &cmp, &opts, &gray);
-	struct bench_image image = load_png(path, cmp, opts, gray);
-	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
-	size_t ri;
-
-	for (ri = 0; ri < sizeof(ratios)/sizeof(ratios[0]); ri++) {
-		run_one(image, cs, ratios[ri], cs_name);
-	}
 	free(image.buffer);
-}
-
-int main(int argc, char *argv[])
-{
-	const char *env;
-	if (argc != 2) { fprintf(stderr, "usage: %s <png>\n", argv[0]); return 1; }
-	env = getenv("OILITERATIONS");
-	g_iters = env ? atoi(env) : 1;
-	if (g_iters < 1) g_iters = 1;
-
-	bench_cs(argv[1], OIL_CS_G, "G");
-	bench_cs(argv[1], OIL_CS_GA, "GA");
-	bench_cs(argv[1], OIL_CS_RGB, "RGB");
-	bench_cs(argv[1], OIL_CS_RGBX, "RGBX");
-	bench_cs(argv[1], OIL_CS_RGBA, "RGBA");
-	bench_cs(argv[1], OIL_CS_CMYK, "CMYK");
 	return 0;
 }
