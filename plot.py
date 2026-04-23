@@ -373,9 +373,8 @@ CHART_HTML = r"""<!doctype html>
             margin-top: 0.6rem; font-size: 0.9rem; }
   #legend label { display: inline-flex; align-items: center;
                   gap: 0.35rem; cursor: pointer; user-select: none; }
-  #legend .swatch { display: inline-block; width: 14px; height: 14px;
-                    border-radius: 2px;
-                    border: 1px solid rgba(0,0,0,0.15); }
+  #legend .swatch { display: inline-block; width: 20px; height: 3px;
+                    border-radius: 1px; }
 
   #chart { position: relative; margin-top: 0.5rem; }
   .tooltip { position: absolute; top: 8px;
