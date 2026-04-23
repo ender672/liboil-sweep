@@ -133,9 +133,9 @@ v4)
 		fi
 	fi
 
-	# -I. picks up the rev's oil_resample.h; harness_v4.c includes probe.h
-	# which we generated in CWD above.
-	$CC $CFLAGS -I. "$SWEEP_DIR/harness_v4.c" $objs \
+	# -I. picks up the rev's oil_resample.h and the CWD-generated probe.h;
+	# -I"$SWEEP_DIR" picks up harness_png.h.
+	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v4.c" $objs \
 		-o harness -lpng -lm
 
 	# Classify "embedded SSE2" era — oil_resample.c runs SSE2 on x86_64 but
@@ -172,14 +172,14 @@ v4)
 v3c)
 	# late-v3: enum oil_colorspace + preprocess_xscaler + fix_ratio
 	$CC $CFLAGS -c resample.c -o resample.o
-	$CC $CFLAGS -I. "$SWEEP_DIR/harness_v3c.c" resample.o \
+	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v3c.c" resample.o \
 		-o harness -lpng -lm
 	;;
 
 v3b)
 	# middle-v3: xscaler_init(cmp,filler) + fix_ratio, no enum
 	$CC $CFLAGS -c resample.c -o resample.o
-	$CC $CFLAGS -I. "$SWEEP_DIR/harness_v3b.c" resample.o \
+	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v3b.c" resample.o \
 		-o harness -lpng -lm
 	;;
 
@@ -252,7 +252,7 @@ if [ "${embedded_sse:-0}" = 1 ] && [ "${SWEEP_NO_SIMD:-0}" != 1 ]; then
 		nosimd_src=oil_resample_nosimd.c
 	fi
 	$CC $CFLAGS -DOIL_NO_SIMD -I. -c "$nosimd_src" -o oil_resample.o
-	$CC $CFLAGS -I. "$SWEEP_DIR/harness_v4.c" oil_resample.o \
+	$CC $CFLAGS -I. -I"$SWEEP_DIR" "$SWEEP_DIR/harness_v4.c" oil_resample.o \
 		-o harness -lpng -lm
 	./harness "$PNG" | \
 		awk -v d="$date" -v r="$sha" 'BEGIN{OFS=","} NF {print d,r,$0}'

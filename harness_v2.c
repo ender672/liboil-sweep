@@ -19,7 +19,8 @@
 #include "resample.h"
 #include "yscaler.h"
 
-static void run_one(struct bench_image image, double ratio, const char *cs_name)
+static void run_one(struct bench_image image, int opts, double ratio,
+	const char *cs_name)
 {
 	uint32_t out_w, out_h;
 	clock_t t_min = 0;
@@ -28,7 +29,12 @@ static void run_one(struct bench_image image, double ratio, const char *cs_name)
 	size_t outbuf_size;
 	size_t in_row_stride = (size_t)image.width * image.cmp;
 
-	compute_out_dims(image.width, image.height, ratio, &out_w, &out_h);
+	{
+		double _w = round(image.width * ratio);
+		double _h = round(image.height * ratio);
+		out_w = (uint32_t)(_w < 1 ? 1 : _w);
+		out_h = (uint32_t)(_h < 1 ? 1 : _h);
+	}
 
 	outbuf_size = (size_t)out_w * image.cmp;
 	outbuf = malloc(outbuf_size);
@@ -47,10 +53,10 @@ static void run_one(struct bench_image image, double ratio, const char *cs_name)
 		for (i = 0; i < out_h; i++) {
 			while ((tmp = yscaler_next(&ys))) {
 				xscale(p, (long)image.width, tmp,
-					(long)out_w, image.cmp, image.opts);
+					(long)out_w, image.cmp, opts);
 				p += in_row_stride;
 			}
-			yscaler_scale(&ys, outbuf, out_w, image.cmp, image.opts);
+			yscaler_scale(&ys, outbuf, out_w, image.cmp, opts);
 		}
 
 		{
@@ -75,7 +81,7 @@ static void bench_cs(const char *path, int cmp, int opts, int gray,
 	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
 	size_t ri;
 	for (ri = 0; ri < sizeof(ratios)/sizeof(ratios[0]); ri++) {
-		run_one(image, ratios[ri], cs_name);
+		run_one(image, opts, ratios[ri], cs_name);
 	}
 	free(image.buffer);
 }

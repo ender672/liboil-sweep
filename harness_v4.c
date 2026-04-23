@@ -1,116 +1,41 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
-#include <setjmp.h>
-#include <png.h>
-
+/*
+ * Benchmark harness for the v4 liboil API (oil_resample.h / oil_scale_init /
+ * enum oil_colorspace). SIMD backends are advertised by probe.h via HAS_SSE2
+ * / HAS_AVX2 / HAS_NEON; colorspaces via HAS_CS_*.
+ *
+ * Uses the shared harness_png.h loader; cs is passed alongside the image
+ * rather than being carried in the struct. cs→(cmp,opts,gray) mapping below
+ * only references enum values whose HAS_CS_* macro is defined.
+ */
+#include "harness_png.h"
 #include "oil_resample.h"
 #include "probe.h"
 
-struct bench_image {
-	unsigned char *buffer;
-	int width;
-	int height;
-	enum oil_colorspace cs;
-};
-
-static struct bench_image load_png(const char *path, enum oil_colorspace cs)
+static void cs_to_png_params(enum oil_colorspace cs, int *cmp, int *opts,
+	int *gray)
 {
-	struct bench_image bi;
-	png_structp rpng;
-	png_infop rinfo;
-	FILE *input;
-	size_t row_stride, buf_len;
-	unsigned char **buf_ptrs;
-	int i;
-
-	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if (setjmp(png_jmpbuf(rpng))) {
-		fprintf(stderr, "PNG Decoding Error.\n");
-		exit(1);
-	}
-
-	input = fopen(path, "rb");
-	if (!input) {
-		fprintf(stderr, "Unable to open %s\n", path);
-		exit(1);
-	}
-
-	rinfo = png_create_info_struct(rpng);
-	png_init_io(rpng, input);
-	png_read_info(rpng, rinfo);
-
-	if (png_get_color_type(rpng, rinfo) != PNG_COLOR_TYPE_RGBA) {
-		fprintf(stderr, "Input image must be RGBA.\n");
-		exit(1);
-	}
-
+	*cmp = OIL_CMP(cs);
+	*opts = 0;
+	*gray = 0;
 	switch (cs) {
 #ifdef HAS_CS_G
-	case OIL_CS_G:
-		png_set_rgb_to_gray(rpng, 1, -1, -1);
-		png_set_strip_alpha(rpng);
-		break;
+	case OIL_CS_G: *gray = 1; break;
 #endif
 #ifdef HAS_CS_GA
-	case OIL_CS_GA:
-		png_set_rgb_to_gray(rpng, 1, -1, -1);
-		break;
-#endif
-#ifdef HAS_CS_RGB
-	case OIL_CS_RGB:
-		png_set_strip_alpha(rpng);
-		break;
+	case OIL_CS_GA: *gray = 1; break;
 #endif
 #ifdef HAS_CS_RGBX
-	case OIL_CS_RGBX:
-		png_set_strip_alpha(rpng);
-		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
-		break;
+	case OIL_CS_RGBX: *opts = 1; break;
 #endif
 #ifdef HAS_CS_RGBX_NOGAMMA
-	case OIL_CS_RGBX_NOGAMMA:
-		png_set_strip_alpha(rpng);
-		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
-		break;
-#endif
-#ifdef HAS_CS_RGB_NOGAMMA
-	case OIL_CS_RGB_NOGAMMA:
-		png_set_strip_alpha(rpng);
-		break;
+	case OIL_CS_RGBX_NOGAMMA: *opts = 1; break;
 #endif
 	default:
-		/* RGBA / ARGB / CMYK / *_NOGAMMA RGBA: keep RGBA bytes as-is */
+		/* RGB / RGBA / ARGB / CMYK / *_NOGAMMA RGB(A): nothing extra.
+		 * strip_alpha for cmp==3 is handled inside load_png. */
 		break;
 	}
-
-	bi.width = png_get_image_width(rpng, rinfo);
-	bi.height = png_get_image_height(rpng, rinfo);
-	bi.cs = cs;
-
-	row_stride = (size_t)bi.width * (size_t)OIL_CMP(cs);
-	buf_len = (size_t)bi.height * row_stride;
-	bi.buffer = malloc(buf_len);
-	buf_ptrs = malloc(bi.height * sizeof(unsigned char *));
-	if (!bi.buffer || !buf_ptrs) {
-		fprintf(stderr, "Unable to allocate buffers.\n");
-		exit(1);
-	}
-	for (i = 0; i < bi.height; i++) {
-		buf_ptrs[i] = bi.buffer + i * row_stride;
-	}
-
-	png_read_image(rpng, buf_ptrs);
-	png_destroy_read_struct(&rpng, &rinfo, NULL);
-
-	free(buf_ptrs);
-	fclose(input);
-	return bi;
 }
-
-static int g_iters;
 
 #define RUN(IN_FN, OUT_FN, BACKEND_LABEL) do {                             \
 	clock_t t_min = 0;                                                 \
@@ -150,7 +75,9 @@ static int g_iters;
 static void bench_cs(const char *path, enum oil_colorspace cs,
 	const char *cs_name)
 {
-	struct bench_image image = load_png(path, cs);
+	int cmp, opts, gray;
+	cs_to_png_params(cs, &cmp, &opts, &gray);
+	struct bench_image image = load_png(path, cmp, opts, gray);
 	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
 	size_t ri;
 	size_t in_row_stride = (size_t)image.width * (size_t)OIL_CMP(cs);

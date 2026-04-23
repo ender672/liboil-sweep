@@ -22,7 +22,12 @@ static void run_one(struct bench_image image, double ratio, const char *cs_name)
 	size_t outbuf_size;
 	size_t in_row_stride = (size_t)image.width * image.cmp;
 
-	compute_out_dims(image.width, image.height, ratio, &out_w, &out_h);
+	{
+		double _w = round(image.width * ratio);
+		double _h = round(image.height * ratio);
+		out_w = (uint32_t)(_w < 1 ? 1 : _w);
+		out_h = (uint32_t)(_h < 1 ? 1 : _h);
+	}
 
 	outbuf_size = (size_t)out_w * image.cmp;
 	outbuf = malloc(outbuf_size);

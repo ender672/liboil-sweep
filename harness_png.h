@@ -1,7 +1,12 @@
 /*
- * Shared PNG loader for the v2-era benchmark harnesses. Included (not linked)
- * because the older libraries have pre-compiler-defines variations that are
+ * Shared PNG loader used by every harness. Included (not linked) because the
+ * era-specific scaling logic around it has preprocessor variations that are
  * simpler to specialize per-harness than to parametrize.
+ *
+ * The returned struct holds only what the loader actually produced: the pixel
+ * buffer, its dimensions, and the per-pixel byte count after transforms.
+ * Era-specific values (v2 OIL_FILLER opts, v3b filler flag, v3c/v4 colorspace
+ * enum) are the caller's concern and are carried alongside, not in here.
  */
 #ifndef HARNESS_PNG_H
 #define HARNESS_PNG_H
@@ -20,7 +25,6 @@ struct bench_image {
 	int width;
 	int height;
 	int cmp;
-	int opts;
 };
 
 static struct bench_image load_png(const char *path, int cmp, int opts, int gray)
@@ -56,7 +60,6 @@ static struct bench_image load_png(const char *path, int cmp, int opts, int gray
 	bi.width = png_get_image_width(rpng, rinfo);
 	bi.height = png_get_image_height(rpng, rinfo);
 	bi.cmp = cmp;
-	bi.opts = opts;
 
 	row_stride = (size_t)bi.width * cmp;
 	buf_len = (size_t)bi.height * row_stride;
@@ -74,16 +77,5 @@ static struct bench_image load_png(const char *path, int cmp, int opts, int gray
 }
 
 static int g_iters;
-
-static void compute_out_dims(int in_w, int in_h, double ratio,
-	uint32_t *out_w, uint32_t *out_h)
-{
-	double w = round(in_w * ratio);
-	double h = round(in_h * ratio);
-	if (w < 1) w = 1;
-	if (h < 1) h = 1;
-	*out_w = (uint32_t)w;
-	*out_h = (uint32_t)h;
-}
 
 #endif

@@ -66,7 +66,7 @@ liboil's public API has mutated substantially over its history. To benchmark a s
 | v4     | `harness_v4.c`       | `oil_resample.h` with `oil_scale_init`                |
 | v1     | (none — skipped)     | `resample.h` with `padded_sl_init`                    |
 
-v2-era harnesses share `harness_png.h` (included, not linked — there are enough per-era preprocessor variations that specialization is simpler than parameterization).
+All harnesses share `harness_png.h` (included, not linked — there are enough per-era preprocessor variations in the surrounding scaling logic that specialization is simpler than parameterization). v3c/v4 key off `enum oil_colorspace` and translate cs → (cmp, opts, gray) before calling `load_png`; cs is then carried through run_one as a separate argument rather than in the shared `struct bench_image`.
 
 When touching harnesses: each `harness_v*.c` is pinned to its era's API. Do not try to unify them. When adding a new era, extend `detect_era` and add a `case` in `run.sh`.
 

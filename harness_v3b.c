@@ -9,87 +9,15 @@
  *   The "colorspace" labels (G, GA, RGB, RGBX, RGBA) map to (cmp, filler)
  *   pairs so rows stitch to later eras in the CSV, but note that scaling at
  *   this era has no gamma/premul-alpha semantics.
+ *
+ * Uses the shared harness_png.h loader; struct bench_image's `opts` field is
+ * this era's `filler` flag.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
-#include <setjmp.h>
-#include <stdint.h>
-#include <png.h>
-
+#include "harness_png.h"
 #include "resample.h"
 
-struct bench_image {
-	unsigned char *buffer;
-	int width;
-	int height;
-	uint8_t cmp;
-	int filler;
-};
-
-static struct bench_image load_png(const char *path, uint8_t cmp, int filler,
-	int gray)
-{
-	struct bench_image bi;
-	png_structp rpng;
-	png_infop rinfo;
-	FILE *input;
-	size_t row_stride, buf_len;
-	unsigned char **buf_ptrs;
-	int i;
-
-	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if (setjmp(png_jmpbuf(rpng))) {
-		fprintf(stderr, "PNG Decoding Error.\n");
-		exit(1);
-	}
-
-	input = fopen(path, "rb");
-	if (!input) { fprintf(stderr, "Unable to open %s\n", path); exit(1); }
-	rinfo = png_create_info_struct(rpng);
-	png_init_io(rpng, input);
-	png_read_info(rpng, rinfo);
-
-	if (png_get_color_type(rpng, rinfo) != PNG_COLOR_TYPE_RGBA) {
-		fprintf(stderr, "Input must be RGBA.\n"); exit(1);
-	}
-
-	/* Transform based on target cmp (and optional gray conversion) */
-	if (gray) png_set_rgb_to_gray(rpng, 1, -1, -1);
-	if (cmp == 1 || cmp == 3) png_set_strip_alpha(rpng);
-	if (cmp == 4 && filler) {
-		png_set_strip_alpha(rpng);
-		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
-	}
-	/* else cmp=2 (GA) / cmp=4 with filler=0 (RGBA): take whatever RGBA gives */
-
-	bi.width = png_get_image_width(rpng, rinfo);
-	bi.height = png_get_image_height(rpng, rinfo);
-	bi.cmp = cmp;
-	bi.filler = filler;
-
-	row_stride = (size_t)bi.width * cmp;
-	buf_len = (size_t)bi.height * row_stride;
-	bi.buffer = malloc(buf_len);
-	buf_ptrs = malloc(bi.height * sizeof(unsigned char *));
-	if (!bi.buffer || !buf_ptrs) {
-		fprintf(stderr, "Unable to allocate buffers.\n"); exit(1);
-	}
-	for (i = 0; i < bi.height; i++) {
-		buf_ptrs[i] = bi.buffer + i * row_stride;
-	}
-	png_read_image(rpng, buf_ptrs);
-	png_destroy_read_struct(&rpng, &rinfo, NULL);
-	free(buf_ptrs);
-	fclose(input);
-	return bi;
-}
-
-static int g_iters;
-
-static void run_one(struct bench_image image, double ratio, const char *cs_name)
+static void run_one(struct bench_image image, int filler, double ratio,
+	const char *cs_name)
 {
 	uint32_t out_w, out_h;
 	clock_t t_min = 0;
@@ -115,7 +43,7 @@ static void run_one(struct bench_image image, double ratio, const char *cs_name)
 		clock_t t0 = clock();
 
 		xscaler_init(&xs, (uint32_t)image.width, out_w, image.cmp,
-			image.filler);
+			filler);
 		yscaler_init(&ys, (uint32_t)image.height, out_h,
 			(size_t)out_w * image.cmp);
 
@@ -126,7 +54,7 @@ static void run_one(struct bench_image image, double ratio, const char *cs_name)
 				p += in_row_stride;
 				xscaler_scale(&xs, tmp);
 			}
-			yscaler_scale(&ys, outbuf, i, image.cmp, image.filler);
+			yscaler_scale(&ys, outbuf, i, image.cmp, filler);
 		}
 
 		{
@@ -145,14 +73,14 @@ static void run_one(struct bench_image image, double ratio, const char *cs_name)
 	free(outbuf);
 }
 
-static void bench_cs(const char *path, uint8_t cmp, int filler, int gray,
+static void bench_cs(const char *path, int cmp, int filler, int gray,
 	const char *cs_name)
 {
 	struct bench_image image = load_png(path, cmp, filler, gray);
 	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
 	size_t ri;
 	for (ri = 0; ri < sizeof(ratios)/sizeof(ratios[0]); ri++) {
-		run_one(image, ratios[ri], cs_name);
+		run_one(image, filler, ratios[ri], cs_name);
 	}
 	free(image.buffer);
 }
