@@ -257,7 +257,7 @@ function buildGrid() {
   htr.appendChild(document.createElement("th"));
   for (const r of DATA.ratios) {
     const th = document.createElement("th");
-    th.textContent = "scale " + r;
+    th.textContent = "ratio " + r;
     htr.appendChild(th);
   }
   thead.appendChild(htr);
@@ -452,13 +452,13 @@ function main() {
   }
 
   document.getElementById("title").textContent =
-    cs + "  —  scale " + ratio;
+    cs + "  —  ratio " + ratio;
   document.title = "liboil — " + cs + " @ " + ratio;
 
   const g = seriesFor(cs, ratio);
   if (!g) {
     chartDiv.innerHTML = "<p class='error'>No data for "
-      + cs + " @ scale " + ratio + ".</p>";
+      + cs + " @ ratio " + ratio + ".</p>";
     return;
   }
   const { backends, data } = g;
