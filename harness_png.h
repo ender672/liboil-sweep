@@ -26,6 +26,9 @@
 #include <time.h>
 #include <setjmp.h>
 #include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
 #include <png.h>
 
 struct bench_image {
@@ -50,9 +53,31 @@ static inline unsigned char harness_rgb_to_gray(unsigned r, unsigned g,
 }
 
 /*
+ * Ownership tracking for the RGBA buffer. Raw-cache path mmaps the file
+ * (MAP_PRIVATE, PROT_READ|PROT_WRITE so the RGBX in-place alpha-fill works via
+ * COW); libpng path malloc's. harness_rgba_free() picks the right deallocator.
+ * After the raw/libpng load, load_png's transform branches free rgba and
+ * allocate a fresh bi.buffer — harness_rgba_free resets the flag so the
+ * downstream free on bi.buffer uses plain free().
+ */
+static int g_rgba_mmapped;
+static size_t g_rgba_bytes;
+
+static void harness_rgba_free(void *p)
+{
+	if (!p) return;
+	if (g_rgba_mmapped) {
+		munmap(p, g_rgba_bytes);
+		g_rgba_mmapped = 0;
+	} else {
+		free(p);
+	}
+}
+
+/*
  * Read the full RGBA raster (either from the raw cache or via libpng) into
- * *rgba_out (malloc'd, caller frees) and set *w_out/*h_out. The PNG path is
- * only consulted when the cache env vars are unset.
+ * *rgba_out (owned by harness_rgba_free) and set *w_out/*h_out. The PNG path
+ * is only consulted when the cache env vars are unset.
  */
 static void harness_read_rgba(const char *png_path, unsigned char **rgba_out,
 	int *w_out, int *h_out)
@@ -62,19 +87,21 @@ static void harness_read_rgba(const char *png_path, unsigned char **rgba_out,
 	const char *h_env = getenv("HARNESS_RAW_H");
 
 	if (raw && w_env && h_env) {
-		FILE *f;
+		int fd;
 		int w = atoi(w_env);
 		int h = atoi(h_env);
 		size_t n = (size_t)w * (size_t)h * 4;
-		unsigned char *buf = malloc(n);
-		if (!buf) { fprintf(stderr, "alloc rgba\n"); exit(1); }
-		f = fopen(raw, "rb");
-		if (!f) { fprintf(stderr, "open %s\n", raw); exit(1); }
-		if (fread(buf, 1, n, f) != n) {
-			fprintf(stderr, "short read %s\n", raw); exit(1);
+		void *buf;
+		fd = open(raw, O_RDONLY);
+		if (fd < 0) { fprintf(stderr, "open %s\n", raw); exit(1); }
+		buf = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+		close(fd);
+		if (buf == MAP_FAILED) {
+			fprintf(stderr, "mmap %s\n", raw); exit(1);
 		}
-		fclose(f);
-		*rgba_out = buf;
+		g_rgba_mmapped = 1;
+		g_rgba_bytes = n;
+		*rgba_out = (unsigned char *)buf;
 		*w_out = w;
 		*h_out = h;
 		return;
@@ -139,7 +166,7 @@ static struct bench_image load_png(const char *path, int cmp, int opts, int gray
 			bi.buffer[i] = harness_rgb_to_gray(
 				rgba[4*i+0], rgba[4*i+1], rgba[4*i+2]);
 		}
-		free(rgba);
+		harness_rgba_free(rgba);
 	} else if (gray && cmp == 2) {
 		bi.buffer = malloc(npix * 2);
 		if (!bi.buffer) { fprintf(stderr, "alloc GA\n"); exit(1); }
@@ -148,7 +175,7 @@ static struct bench_image load_png(const char *path, int cmp, int opts, int gray
 				rgba[4*i+0], rgba[4*i+1], rgba[4*i+2]);
 			bi.buffer[2*i+1] = rgba[4*i+3];
 		}
-		free(rgba);
+		harness_rgba_free(rgba);
 	} else if (cmp == 3) {
 		bi.buffer = malloc(npix * 3);
 		if (!bi.buffer) { fprintf(stderr, "alloc RGB\n"); exit(1); }
@@ -157,7 +184,7 @@ static struct bench_image load_png(const char *path, int cmp, int opts, int gray
 			bi.buffer[3*i+1] = rgba[4*i+1];
 			bi.buffer[3*i+2] = rgba[4*i+2];
 		}
-		free(rgba);
+		harness_rgba_free(rgba);
 	} else if (cmp == 4 && opts) {
 		/* RGBX: source alpha replaced with 0xff filler. Done in-place
 		 * over the already-allocated RGBA buffer. */

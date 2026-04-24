@@ -104,6 +104,6 @@ int main(int argc, char *argv[])
 		fflush(stdout);
 	}
 	free(outbuf);
-	free(image.buffer);
+	harness_rgba_free(image.buffer);
 	return 0;
 }
