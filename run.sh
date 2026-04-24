@@ -59,7 +59,19 @@ rm -f "$SWEEP_DIR/probe.h"
 # Benchmark matrix: ratios are the same across every era. cs_list is set
 # per-era below (v4 probes the rev's headers; earlier eras hardcode the
 # list their harness accepts).
+# SWEEP_RATIO_FILTER=down|up narrows the list to downscales (<1) or upscales
+# (>=1); unset runs both.
 ratios="0.01 0.125 0.8 2.14"
+if [ -n "${SWEEP_RATIO_FILTER:-}" ]; then
+	filtered=""
+	for r in $ratios; do
+		case "$SWEEP_RATIO_FILTER" in
+		down) awk -v r="$r" 'BEGIN{exit !(r < 1)}'  && filtered="$filtered $r" ;;
+		up)   awk -v r="$r" 'BEGIN{exit !(r >= 1)}' && filtered="$filtered $r" ;;
+		esac
+	done
+	ratios=$filtered
+fi
 
 case "$era" in
 v4)

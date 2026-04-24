@@ -10,11 +10,39 @@
 #       merges into existing CSV (rows for matched SHAs are replaced, not
 #       duplicated). Any `git rev-list` range spec works.
 #   LIBOIL_REPO=... SWEEP_PNG=/path/to/img.png ./sweep.sh     # override default PNG
+#   LIBOIL_REPO=... ./sweep.sh --down                         # only downscales (ratio < 1)
+#   LIBOIL_REPO=... ./sweep.sh --up                           # only upscales (ratio >= 1)
 #
 # Checkouts happen in a throwaway git worktree so the user's working tree
 # (including untracked/gitignored files) is never touched.
 
 set -o pipefail
+
+RATIO_FILTER=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--down)
+		[ -n "$RATIO_FILTER" ] && {
+			echo "sweep: --down and --up are mutually exclusive" >&2
+			exit 2
+		}
+		RATIO_FILTER=down
+		;;
+	--up)
+		[ -n "$RATIO_FILTER" ] && {
+			echo "sweep: --down and --up are mutually exclusive" >&2
+			exit 2
+		}
+		RATIO_FILTER=up
+		;;
+	*)
+		echo "sweep: unknown arg: $1" >&2
+		exit 2
+		;;
+	esac
+	shift
+done
+export SWEEP_RATIO_FILTER=$RATIO_FILTER
 
 : "${LIBOIL_REPO:?LIBOIL_REPO must be set to a liboil checkout path}"
 REPO=$LIBOIL_REPO
@@ -85,6 +113,7 @@ export OILITERATIONS=${OILITERATIONS:-1}
 export SWEEP_DIR
 export PNG
 echo "sweep: OILITERATIONS=$OILITERATIONS" >&2
+[ -n "$SWEEP_RATIO_FILTER" ] && echo "sweep: ratio filter: $SWEEP_RATIO_FILTER" >&2
 
 # Extract the (possibly multi-line) yscaler_scale declaration from a header
 # and normalize whitespace so the result fits on one line.
