@@ -4,14 +4,13 @@
 # at each rev, accumulate results in sweep/benchmarks.csv.
 #
 # Usage:
-#   LIBOIL_REPO=/path/to/liboil ./sweep.sh                    # full master sweep
-#   LIBOIL_REPO=... OILITERATIONS=100 ./sweep.sh              # more iterations
-#   LIBOIL_REPO=... SWEEP_RANGE="A..B" ./sweep.sh             # re-run subset;
+#   LIBOIL_REPO=/path/to/liboil ./sweep.sh <png>                       # full master sweep
+#   LIBOIL_REPO=... OILITERATIONS=100 ./sweep.sh <png>                 # more iterations
+#   LIBOIL_REPO=... SWEEP_RANGE="A..B" ./sweep.sh <png>                # re-run subset;
 #       merges into existing CSV (rows for matched SHAs are replaced, not
 #       duplicated). Any `git rev-list` range spec works.
-#   LIBOIL_REPO=... SWEEP_PNG=/path/to/img.png ./sweep.sh     # override default PNG
-#   LIBOIL_REPO=... ./sweep.sh --down                         # only downscales (ratio < 1)
-#   LIBOIL_REPO=... ./sweep.sh --up                           # only upscales (ratio >= 1)
+#   LIBOIL_REPO=... ./sweep.sh --down <png>                            # only downscales (ratio < 1)
+#   LIBOIL_REPO=... ./sweep.sh --up <png>                              # only upscales (ratio >= 1)
 #
 # Checkouts happen in a throwaway git worktree so the user's working tree
 # (including untracked/gitignored files) is never touched.
@@ -19,6 +18,7 @@
 set -o pipefail
 
 RATIO_FILTER=""
+PNG=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--down)
@@ -35,14 +35,32 @@ while [ $# -gt 0 ]; do
 		}
 		RATIO_FILTER=up
 		;;
-	*)
-		echo "sweep: unknown arg: $1" >&2
+	-*)
+		echo "sweep: unknown flag: $1" >&2
 		exit 2
+		;;
+	*)
+		[ -n "$PNG" ] && {
+			echo "sweep: unexpected extra arg: $1" >&2
+			exit 2
+		}
+		PNG=$1
 		;;
 	esac
 	shift
 done
 export SWEEP_RATIO_FILTER=$RATIO_FILTER
+
+if [ -z "$PNG" ]; then
+	echo "sweep: missing required <png> argument" >&2
+	echo "usage: LIBOIL_REPO=... $0 [--down|--up] <png>" >&2
+	exit 2
+fi
+if [ ! -f "$PNG" ]; then
+	echo "sweep: benchmark input PNG not found: $PNG" >&2
+	exit 2
+fi
+PNG=$(readlink -f "$PNG")
 
 : "${LIBOIL_REPO:?LIBOIL_REPO must be set to a liboil checkout path}"
 REPO=$LIBOIL_REPO
@@ -51,12 +69,6 @@ cd "$REPO" || exit 2
 
 CSV=$SWEEP_DIR/benchmarks.csv
 ERR=$SWEEP_DIR/errors.log
-PNG=${SWEEP_PNG:-$REPO/USE_THIS_PNG_FOR_BENCHMARKS.png}
-
-if [ ! -f "$PNG" ]; then
-	echo "sweep: missing benchmark input PNG at $PNG" >&2
-	exit 2
-fi
 
 WORKTREE=$(mktemp -d -t liboil-sweep-XXXXXX)
 echo "sweep: worktree at $WORKTREE" >&2
