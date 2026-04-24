@@ -115,6 +115,35 @@ export PNG
 echo "sweep: OILITERATIONS=$OILITERATIONS" >&2
 [ -n "$SWEEP_RATIO_FILTER" ] && echo "sweep: ratio filter: $SWEEP_RATIO_FILTER" >&2
 
+# Decode the input PNG once into a raw RGBA cache so each harness invocation
+# can skip libpng entirely. Saves ~50 ms per harness call — at ~120 calls per
+# v4 rev that's ~6 s/rev of pure decode cost, regardless of OILITERATIONS.
+# Cache invalidates on PNG or decoder-source mtime; the harness falls back to
+# libpng if HARNESS_RAW isn't set (e.g. running a harness by hand).
+CACHE_DIR=$SWEEP_DIR/.cache
+mkdir -p "$CACHE_DIR"
+RAW_CACHE=$CACHE_DIR/input.raw
+RAW_META=$CACHE_DIR/input.meta
+DECODER=$CACHE_DIR/decode_png
+if [ ! -x "$DECODER" ] || [ "$SWEEP_DIR/decode_png.c" -nt "$DECODER" ]; then
+	if ! ${CC:-cc} -O2 "$SWEEP_DIR/decode_png.c" -o "$DECODER" -lpng 2>>"$ERR"; then
+		echo "sweep: failed to build decode_png; see $ERR" >&2
+		exit 2
+	fi
+fi
+if [ ! -f "$RAW_CACHE" ] || [ ! -f "$RAW_META" ] \
+	|| [ "$PNG" -nt "$RAW_CACHE" ] || [ "$DECODER" -nt "$RAW_CACHE" ]; then
+	if ! "$DECODER" "$PNG" "$RAW_CACHE" "$RAW_META" 2>>"$ERR"; then
+		echo "sweep: failed to decode $PNG into raw cache" >&2
+		exit 2
+	fi
+	echo "sweep: cached raw RGBA at $RAW_CACHE" >&2
+fi
+read -r RAW_W RAW_H < "$RAW_META"
+export HARNESS_RAW=$RAW_CACHE
+export HARNESS_RAW_W=$RAW_W
+export HARNESS_RAW_H=$RAW_H
+
 # Extract the (possibly multi-line) yscaler_scale declaration from a header
 # and normalize whitespace so the result fits on one line.
 _yscaler_scale_sig() {

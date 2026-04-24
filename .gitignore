@@ -3,6 +3,7 @@ benchmarks.csv
 benchmarks.csv.*.bak
 benchmarks.csv.bak
 charts/
+.cache/
 
 # Logs
 *.log
