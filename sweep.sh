@@ -253,7 +253,8 @@ while IFS= read -r sha; do
 	esac
 
 	if ! ( cd "$WORKTREE" && "$SWEEP_DIR/run.sh" "$era" "$sha" "$date" ) \
-		>>"$CSV" 2>>"$ERR"; then
+		2>>"$ERR" | tee -a "$CSV" \
+		| awk -F, '{printf "  %s,%s,%s,%s,%s\n", substr($2,1,7), $3, $4, $5, $6; fflush()}' >&2; then
 		echo "[$i/$total] $sha era=$era build-or-run-fail" >&2
 		echo "$sha $date build-or-run-fail" >> "$ERR"
 		continue
