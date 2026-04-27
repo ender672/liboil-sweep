@@ -222,6 +222,7 @@ INTERACTIVE_HTML = r"""<!doctype html>
          margin: 1.5rem; background: #fafafa; color: #222; }
   h1 { margin: 0 0 0.25rem 0; font-size: 1.3rem; }
   .sub { color: #666; margin: 0 0 1.25rem 0; font-size: 0.9rem; }
+  .repo-link { font-size: 0.9rem; margin: 0 0 0.5rem 0; }
   table { border-collapse: collapse; }
   th, td { padding: 4px; vertical-align: middle; }
   th { font-weight: 600; text-align: center; color: #444; }
@@ -236,6 +237,7 @@ INTERACTIVE_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
+<p class="repo-link"><a href="https://github.com/ender672/liboil" target="_blank" rel="noopener">liboil repository on GitHub &rarr;</a></p>
 <h1>liboil benchmark charts (interactive)</h1>
 <p class="sub">
   Click a chart for the interactive version with zoom, pan, and
@@ -399,7 +401,7 @@ CHART_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<p class="back"><a href="./">&larr; back to gallery</a></p>
+<p class="back"><a href="./">&larr; back to gallery</a> &middot; <a href="https://github.com/ender672/liboil" target="_blank" rel="noopener">liboil repository on GitHub &rarr;</a></p>
 <h1 id="title">liboil chart</h1>
 
 <div id="pinned-bar">
